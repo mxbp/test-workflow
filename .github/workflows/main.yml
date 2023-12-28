@@ -38,7 +38,31 @@ jobs:
         id: environment
         run: |
           if [[ "${{ inputs.environment }}" != "" ]]; then
-            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            echo "environment=${{ inputs.environment }} 👌"
+
+            if [[ "${{ inputs.environment }}" == "develop" && "${{ github.ref_name }}" == "develop" ]]; then
+              echo "environment=${{ inputs.environment }} DEVELOP 👍"
+              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            elif [[ ("${{ inputs.environment }}" == "quality_assurance" ||
+                     "${{ inputs.environment }}" == "user_acceptance_testing") &&
+                    ("${{ github.ref_name }}" == "release"* || "${{ github.ref_name }}" == "hotfix"* ) ]]; then
+              echo "environment=${{ inputs.environment }} QA/UAT 👍"
+              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            elif [[ "${{ inputs.environment }}" == "production" &&
+                   ("${{ github.ref_name }}" == "main" || "${{ github.ref_name }}" == "master") ]]; then
+              echo "environment=${{ inputs.environment }} PROD 👍"
+              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            elif [[ "${{ inputs.environment }}" == "sandbox" &&
+                   ("${{ github.ref_name }}" != "develop" ||
+                    "${{ github.ref_name }}" != "release"* || "${{ github.ref_name }}" != "hotfix"* ||
+                    "${{ github.ref_name }}" != "main" || "${{ github.ref_name }}" != "master") ]]; then
+              echo "environment=${{ inputs.environment }} SANDBOX 👍"
+              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+            else
+              echo "environment=${{ inputs.environment }} INCORRECT for branch ${{ github.ref_name }} 👎"
+              exit 1
+            fi
+
           elif [[ "${{ github.ref_name }}" == "develop" ]]; then
             echo "environment=develop" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref_name }}" == "release"* || "${{ github.ref_name }}" == "hotfix"* ]]; then
