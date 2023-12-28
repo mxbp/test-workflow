@@ -37,7 +37,7 @@ jobs:
       - name: Get environment
         id: environment
         run: |
-          if [[ "${{ inputs.environment }}" != null ]]; then
+          if [[ "${{ inputs.environment }}" != "" ]]; then
             echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref_name }}" == "develop" ]]; then
             echo "environment=develop" >> $GITHUB_OUTPUT
