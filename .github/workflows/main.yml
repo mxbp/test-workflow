@@ -1,0 +1,72 @@
+---
+name: Test workflow
+on:
+  push:
+    branches:
+      - develop
+      - release/**
+      - hotfix/**
+  pull_request:
+    branches:
+      - develop
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment for deploy'
+        required: false
+        # default: develop
+        type: choice
+        options:
+          - sandbox
+          - develop
+          - quality_assurance
+          - user_acceptance_testing 
+          - production
+jobs:
+  check_environment:
+    name: Check Environment
+    runs-on: ubuntu-latest
+    outputs:
+      description: ${{ steps.description.outputs.description }}
+      environment: ${{ steps.environment.outputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Get environment
+        id: environment
+        run: |
+          if [[ "${{ inputs.environment }}" != null ]]; then
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref_name }}" == "develop" ]]; then
+            echo "environment=develop" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref_name }}" == "release"* || "${{ github.ref_name }}" == "hotfix"* ]]; then
+            echo "environment=quality_assurance" >> $GITHUB_OUTPUT
+          else
+            echo "environment=default" >> $GITHUB_OUTPUT
+          fi
+      - name: Get description
+        id: description
+        run: |
+          echo "description=$(curl -s -H 'Authorization: token ${{ github.token }}' \
+            'https://api.github.com/repos/${{ github.repository }}' | jq -r '.description')" >> "$GITHUB_OUTPUT"
+      - name: Debug Info
+        run: |
+          echo "github.head_ref    - ${{ github.head_ref }}"
+          echo "github.base_ref    - ${{ github.base_ref }}"
+          echo "github.ref_name    - ${{ github.ref_name }}"
+          echo "github.run_number  - ${{ github.run_number }}"
+          echo "github.run_attempt - ${{ github.run_attempt }}"
+          echo "description        - ${{ steps.description.outputs.description }}"
+          echo "environment        - ${{ steps.environment.outputs.environment }}"
+  use_environment:
+    name: Use Environment
+    runs-on: ubuntu-latest
+    needs: check_environment
+    environment: ${{ needs.check_environment.outputs.environment }}
+    steps:
+      - name: Debug Info
+        run: |
+          echo "description        - ${{ needs.check_environment.outputs.description }}"
+          echo "stage              - ${{ vars.STAGE }}"
