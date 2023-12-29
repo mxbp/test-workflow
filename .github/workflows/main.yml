@@ -44,18 +44,19 @@ jobs:
           # Manual trigger - workflow_dispatch
           if [[ "${{ inputs.environment }}" != "" ]]; then
             GITHUB_ENVIRONMENT=$(echo "${{ inputs.environment }}" | tr [:upper:] [:lower:])
+            GITHUB_DEFAULT_BRANCH=${{ github.event.repository.default_branch }}
 
-            # The PROD environment can use the ${{ github.event.repository.default_branch }} branches
+            # The PROD environment can use the $GITHUB_DEFAULT_BRANCH branches
             if [[ "$GITHUB_ENVIRONMENT" =~ ^(production|prod)$ &&
-                "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then :
+                "${{ github.ref_name }}" == "$GITHUB_DEFAULT_BRANCH" ]]; then :
 
-            # QA and UAT environments can use the ${{ github.event.repository.default_branch }} and release/hotfix branches
+            # QA and UAT environments can use the $GITHUB_DEFAULT_BRANCH and release/hotfix branches
             elif [[ "$GITHUB_ENVIRONMENT" =~ ^(quality_assurance|qa|user_acceptance_testing|uat)$ &&
-                "${{ github.ref_name }}" =~ ^(release|hotfix|${{ github.event.repository.default_branch }})\/?([a-zA-Z0-9._-]*)$ ]]; then :
+                "${{ github.ref_name }}" =~ ^(release|hotfix|$GITHUB_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
 
             # The DEVELOP environment can use the main/master, release/hotfix and develop branches
             elif [[ "$GITHUB_ENVIRONMENT" == "develop" &&
-                "${{ github.ref_name }}" =~ ^(develop|release|hotfix|${{ github.event.repository.default_branch }})\/?([a-zA-Z0-9._-]*)$ ]]; then :
+                "${{ github.ref_name }}" =~ ^(develop|release|hotfix|$GITHUB_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
 
             # The SANDBOX environment can use all branches
             elif [[ "$GITHUB_ENVIRONMENT" == "sandbox" ]]; then :
@@ -110,9 +111,7 @@ jobs:
           gh_pr_up() {
             gh pr create --draft --fill "$@" || gh pr edit "$@"
           }
-          gh_pr_up \
-            --base "${{ github.event.repository.default_branch }}" \
-            --title "Release v${GITHUB_REF_NAME##*/}"
+          gh_pr_up --base "${{ github.event.repository.default_branch }}" --title "Release v${GITHUB_REF_NAME##*/}"
   use_environment:
     name: Use Environment
     runs-on: ubuntu-latest
