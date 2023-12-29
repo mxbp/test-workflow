@@ -103,7 +103,7 @@ jobs:
       - name: Create/Update PR from '${{ github.ref_name }}' to 'main'
         # TODO: README.md :: Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and
         # approve pull requests
-        if: startsWith(github.ref_name, 'release') || startsWith(github.ref_name, 'hotfix')
+        if: startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -128,35 +128,3 @@ jobs:
         run: |
           echo "URL         - https://www.google.com" >> $GITHUB_STEP_SUMMARY
           echo "URL link    - [www.google.com](https://www.google.com)" >> $GITHUB_STEP_SUMMARY
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    if: github.event.pull_request.merged && github.event.repository.default_branch
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Set Git user name and email
-        run: |
-          git config --local user.name "GitHub Actions Bot"
-          git config --local user.email "github-actions-bot@github.com"
-      - name: Set Git tag
-        # TODO: README.md :: Settings > Actions > General > Workflow permissions > Read and write permissions
-        run: |
-          git tag --force --message="v${GITHUB_HEAD_REF##*/}" "v${GITHUB_HEAD_REF##*/}"
-          git push --force --tags
-      - name: Create Release
-        run: gh release create "v${GITHUB_HEAD_REF##*/}" --generate-notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Create PR from '${{ github.ref_name }}' to '${{ github.event.repository.default_branch }}'
-        run: |
-          gh pr create \
-            --base "develop" \
-            --title "Auto-merge PR to 'develop'"
-        # --body "Created by GitHub Actions"
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-      - name: Auto-merge PR to '${{ github.event.repository.default_branch }}'
-        run: gh pr merge --auto --merge
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
