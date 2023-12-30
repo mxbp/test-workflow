@@ -1,5 +1,6 @@
 ---
 name: Test workflow
+# FIXME: github.event.repository.default_branch = "main"
 on:
   push:
     branches:
@@ -12,15 +13,14 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment for deploy'
+        description: "Environment for deploy"
         required: false
-        # default: develop
         type: choice
         options:
           - sandbox
           - develop
           - quality_assurance
-          - user_acceptance_testing 
+          - user_acceptance_testing
           - production
 jobs:
   check_environment:
@@ -37,53 +37,81 @@ jobs:
       - name: Get environment
         id: environment
         run: |
-          if [[ "${{ inputs.environment }}" != "" ]]; then
-            echo "environment=${{ inputs.environment }} 👌"
+          #!/bin/bash
 
-            if [[ "${{ inputs.environment }}" == "develop" && "${{ github.ref_name }}" == "develop" ]]; then
-              echo "environment=${{ inputs.environment }} DEVELOP 👍"
-              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
-            elif [[ ("${{ inputs.environment }}" == "quality_assurance" ||
-                     "${{ inputs.environment }}" == "user_acceptance_testing") &&
-                    ("${{ github.ref_name }}" == "release"* || "${{ github.ref_name }}" == "hotfix"* ) ]]; then
-              echo "environment=${{ inputs.environment }} QA/UAT 👍"
-              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
-            elif [[ "${{ inputs.environment }}" == "production" &&
-                   ("${{ github.ref_name }}" == "main" || "${{ github.ref_name }}" == "master") ]]; then
-              echo "environment=${{ inputs.environment }} PROD 👍"
-              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
-            elif [[ "${{ inputs.environment }}" == "sandbox" &&
-                   ("${{ github.ref_name }}" != "develop" ||
-                    "${{ github.ref_name }}" != "release"* || "${{ github.ref_name }}" != "hotfix"* ||
-                    "${{ github.ref_name }}" != "main" || "${{ github.ref_name }}" != "master") ]]; then
-              echo "environment=${{ inputs.environment }} SANDBOX 👍"
-              echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+          set GITHUB_ENVIRONMENT
+
+          # Manual trigger - workflow_dispatch
+          if [[ "${{ inputs.environment }}" != "" ]]; then
+            GITHUB_ENVIRONMENT=$(echo "${{ inputs.environment }}" | tr [:upper:] [:lower:])
+            GITHUB_DEFAULT_BRANCH=${{ github.event.repository.default_branch }}
+
+            # The PROD environment can use the $GITHUB_DEFAULT_BRANCH branches
+            if [[ "$GITHUB_ENVIRONMENT" =~ ^(production|prod)$ &&
+                "${{ github.ref_name }}" == "$GITHUB_DEFAULT_BRANCH" ]]; then :
+
+            # QA and UAT environments can use the $GITHUB_DEFAULT_BRANCH and release/hotfix branches
+            elif [[ "$GITHUB_ENVIRONMENT" =~ ^(quality_assurance|qa|user_acceptance_testing|uat)$ &&
+                "${{ github.ref_name }}" =~ ^(release|hotfix|$GITHUB_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
+
+            # The DEVELOP environment can use the main/master, release/hotfix and develop branches
+            elif [[ "$GITHUB_ENVIRONMENT" == "develop" &&
+                "${{ github.ref_name }}" =~ ^(develop|release|hotfix|$GITHUB_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
+
+            # The SANDBOX environment can use all branches
+            elif [[ "$GITHUB_ENVIRONMENT" == "sandbox" ]]; then :
+
+            # Exit on invalid condition
             else
-              echo "environment=${{ inputs.environment }} INCORRECT for branch ${{ github.ref_name }} 👎"
+              echo -e "::error::Incorrect environment has been selected.
+              Cannot use environment '${{ inputs.environment }}' for branch '${{ github.ref_name }}' 👎"
               exit 1
             fi
 
+            # Break
+            GITHUB_ENVIRONMENT=${{ inputs.environment }}
+
+          # Automated trigger - workflow_call
+          # DEVELOP environment can use the develop branch
           elif [[ "${{ github.ref_name }}" == "develop" ]]; then
-            echo "environment=develop" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref_name }}" == "release"* || "${{ github.ref_name }}" == "hotfix"* ]]; then
-            echo "environment=quality_assurance" >> $GITHUB_OUTPUT
+            GITHUB_ENVIRONMENT=develop
+          # QA environments can use release/hotfix branches
+          elif [[ "${{ github.ref_name }}" =~ ^(release|hotfix)\/([0-9.]*)$ ]]; then
+            GITHUB_ENVIRONMENT=quality_assurance
           else
-            echo "environment=default" >> $GITHUB_OUTPUT
+            echo "::error::Cannot define the environment for '${{ github.ref_name }}' branch 👎"
+            exit 1
           fi
+
+          echo "::group::Debug Info"
+          echo "Branch      - ${{ github.ref_name }} 👍"
+          echo "Environment - $GITHUB_ENVIRONMENT 👍"
+          echo "environment=$GITHUB_ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
       - name: Get description
         id: description
         run: |
-          echo "description=$(curl -s -H 'Authorization: token ${{ github.token }}' \
-            'https://api.github.com/repos/${{ github.repository }}' | jq -r '.description')" >> "$GITHUB_OUTPUT"
-      - name: Debug Info
+          echo "description=$(curl --silent --header 'Authorization: token ${{ github.token }}' \
+            'https://api.github.com/repos/${{ github.repository }}' | \
+            jq --raw-output '.description')" >> "$GITHUB_OUTPUT"
+      - name: Generate list using Markdown
         run: |
-          echo "github.head_ref    - ${{ github.head_ref }}"
-          echo "github.base_ref    - ${{ github.base_ref }}"
-          echo "github.ref_name    - ${{ github.ref_name }}"
-          echo "github.run_number  - ${{ github.run_number }}"
-          echo "github.run_attempt - ${{ github.run_attempt }}"
-          echo "description        - ${{ steps.description.outputs.description }}"
-          echo "environment        - ${{ steps.environment.outputs.environment }}"
+          echo "Info :speech_balloon:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Branch         - ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Environment    - ${{ steps.environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "Default branch - ${{ github.event.repository.default_branch }}" >> $GITHUB_STEP_SUMMARY
+      - name: Create/Update PR from '${{ github.ref_name }}' to 'main'
+        # TODO: README.md :: Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and
+        # approve pull requests
+        if: startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh_pr() {
+            gh pr create --draft --fill "$@" || gh pr edit "$@"
+          }
+          gh_pr --base "${{ github.event.repository.default_branch }}" --title "Release v${GITHUB_REF_NAME##*/}"
   use_environment:
     name: Use Environment
     runs-on: ubuntu-latest
@@ -92,5 +120,10 @@ jobs:
     steps:
       - name: Debug Info
         run: |
-          echo "description        - ${{ needs.check_environment.outputs.description }}"
-          echo "stage              - ${{ vars.STAGE }}"
+          echo "Description        - ${{ needs.check_environment.outputs.description }}"
+          echo "Stage              - ${{ vars.STAGE }}"
+          echo "Default branch     - ${{ github.event.repository.default_branch }}"
+      - name: Generate list using Markdown
+        run: |
+          echo "URL         - https://www.google.com" >> $GITHUB_STEP_SUMMARY
+          echo "URL link    - [www.google.com](https://www.google.com)" >> $GITHUB_STEP_SUMMARY
