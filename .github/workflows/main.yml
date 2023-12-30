@@ -10,6 +10,8 @@ on:
   pull_request:
     branches:
       - develop
+      - release/**
+      - hotfix/**
   workflow_dispatch:
     inputs:
       environment:
@@ -127,8 +129,25 @@ jobs:
         run: |
           echo "URL         - https://www.google.com" >> $GITHUB_STEP_SUMMARY
           echo "URL link    - [www.google.com](https://www.google.com)" >> $GITHUB_STEP_SUMMARY
+      - name: Checkout
+        if: success()
+        uses: actions/checkout@v4
+      - name: Create labels
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh_label() {
+            gh label create "$@" --force
+          }
+          gh_label sandbox --description "Sandbox" --color 2E86C1
+          gh_label develop --description "Develop" --color 229954
+          gh_label quality_assurance --description "Quality Assurance" --color D4AC0D
+          gh_label user_acceptance_testing --description "User Acceptance Testing" --color BA4A00
       - name: Add '${{ needs.check_environment.outputs.environment }}' label
-        if: success() && github.event_name == 'pull_request'
-        run: |          
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
           gh pr edit --base "${{ github.event.repository.default_branch }}" \
             --add-label "${{ needs.check_environment.outputs.environment }}"
