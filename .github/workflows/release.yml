@@ -31,11 +31,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Create Release
-        run: gh release create "v${GITHUB_HEAD_REF##*/}" --generate-notes
+        run: |
           gh_release() {
             gh release delete "$@" --cleanup-tag --yes || gh release create "$@" --generate-notes
           }
-          gh_release ""v${GITHUB_HEAD_REF##*/}""
+          gh_release "v${GITHUB_HEAD_REF##*/}"
         env:
           GH_TOKEN: ${{ github.token }}
   pr:
