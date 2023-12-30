@@ -25,9 +25,17 @@ on:
           - user_acceptance_testing
           - production
 jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: echo "Test build"
   check_environment:
     name: Check Environment
     runs-on: ubuntu-latest
+    needs: build
+    if: success()
     outputs:
       description: ${{ steps.description.outputs.description }}
       environment: ${{ steps.environment.outputs.environment }}
@@ -90,64 +98,118 @@ jobs:
           echo "Environment - $GITHUB_ENVIRONMENT 👍"
           echo "environment=$GITHUB_ENVIRONMENT" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
-      - name: Get description
+      - name: Get repo description
         id: description
         run: |
-          echo "description=$(curl --silent --header 'Authorization: token ${{ github.token }}' \
-            'https://api.github.com/repos/${{ github.repository }}' | \
-            jq --raw-output '.description')" >> "$GITHUB_OUTPUT"
+          #!/bin/bash
+
+          response=$(curl --silent --header 'Authorization: token ${{ github.token }}' \
+            'https://api.github.com/repos/${{ github.repository }}' | jq --raw-output '.description')
+
+          echo "::group::Debug Info"
+          echo "Description - $response"
+          echo "description=$response" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
       - name: Generate list using Markdown
         run: |
           echo "Info :speech_balloon:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Branch         - ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Environment    - ${{ steps.environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "Default branch - ${{ github.event.repository.default_branch }}" >> $GITHUB_STEP_SUMMARY
-      - name: Create/Update PR from '${{ github.ref_name }}' to 'main'
-        # TODO: README.md :: Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and
-        # approve pull requests
-        if: startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh_pr() {
-            gh pr create --draft --fill "$@" || gh pr edit "$@"
-          }
-          gh_pr --base "${{ github.event.repository.default_branch }}" --title "Release v${GITHUB_REF_NAME##*/}"
-  use_environment:
-    name: Use Environment
+          echo "Branch             - ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Environment        - ${{ steps.environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "Default branch     - ${{ github.event.repository.default_branch }}" >> $GITHUB_STEP_SUMMARY
+  deploy:
+    name: Deploy to ${{ needs.check_environment.outputs.environment }}
     runs-on: ubuntu-latest
     needs: check_environment
+    if: success()
     environment: ${{ needs.check_environment.outputs.environment }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Debug Info
         run: |
           echo "Description        - ${{ needs.check_environment.outputs.description }}"
           echo "Stage              - ${{ vars.STAGE }}"
           echo "Default branch     - ${{ github.event.repository.default_branch }}"
-      - name: Generate list using Markdown
-        run: |
-          echo "URL         - https://www.google.com" >> $GITHUB_STEP_SUMMARY
-          echo "URL link    - [www.google.com](https://www.google.com)" >> $GITHUB_STEP_SUMMARY
-      - name: Checkout
-        if: success()
-        uses: actions/checkout@v4
-      - name: Create labels
-        if: success()
+          echo "URL                - https://www.google.com" >> $GITHUB_STEP_SUMMARY
+          echo "URL link           - [www.google.com](https://www.google.com)" >> $GITHUB_STEP_SUMMARY
+      - name: Deploy
+        id: deploy
+        run: echo "Test deploy"
+      - name: Create/update PR from '${{ github.ref_name }}' to '${{ github.event.repository.default_branch }}'
+        # TODO: README.md :: Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and
+        # approve pull requests
+        if: >
+          always() &&
+          (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/'))
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_ENVIRONMENT: ${{ needs.check_environment.outputs.environment }}
         run: |
-          gh_label() {
-            gh label create "$@" --force
-          }
-          gh_label sandbox --description "Sandbox" --color 2E86C1
-          gh_label develop --description "Develop" --color 229954
-          gh_label quality_assurance --description "Quality Assurance" --color D4AC0D
-          gh_label user_acceptance_testing --description "User Acceptance Testing" --color BA4A00
-      - name: Add '${{ needs.check_environment.outputs.environment }}' label
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr edit --base "${{ github.event.repository.default_branch }}" \
-            --add-label "${{ needs.check_environment.outputs.environment }}"
+          #!/bin/bash
+
+          set GITHUB_PR_MESSAGE
+          set GITHUB_PR_STATUS
+          set GITHUB_PR_ACTION
+
+          # Create or edit a pull request
+          gh pr create --draft --fill \
+            --base "${{ github.event.repository.default_branch }}" \
+            --title "Release v${GITHUB_REF_NAME##*/}" && GITHUB_PR_MESSAGE="PR was created and marked as a draft" || \
+            gh pr edit \
+              --base "${{ github.event.repository.default_branch }}" \
+              --title "Release v${GITHUB_REF_NAME##*/}" && GITHUB_PR_MESSAGE="PR was updated"
+
+          # Get deployment outcome. Change PR status to draft if deployment fails
+          if [[ ${{ steps.deploy.outcome }} == "success" ]]; then
+            GITHUB_PR_ACTION="add"
+          else
+            gh pr ready --undo
+            GITHUB_PR_ACTION="remove"
+          fi
+
+          # Update labels based on deployment outcome
+          gh pr edit --${GITHUB_PR_ACTION}-label "$GITHUB_ENVIRONMENT" && \
+            GITHUB_PR_MESSAGE+=", label ${GITHUB_PR_ACTION}ed - $GITHUB_ENVIRONMENT"
+
+          # Reset label status and move PR to draft if deploying to QA environment
+          if [[ "$GITHUB_ENVIRONMENT" =~ ^(quality_assurance|qa)$ ]]; then
+            gh pr edit --remove-label "user_acceptance_testing" && \
+              GITHUB_PR_MESSAGE+=", label removed - user_acceptance_testing"
+            gh pr ready --undo
+          fi
+
+          # Check for specific labels and update PR status
+          labels=$(gh pr view --json labels --jq '.labels[].name')
+          # TODO: Make the condition more flexible
+          if echo "$labels" | grep -q 'quality_assurance' && echo "$labels" | grep -q 'user_acceptance_testing'; then
+            gh pr ready && GITHUB_PR_STATUS="Pull request has been updated, marked as 'ready for review' 👍"
+          else
+            if [[ "$GITHUB_ENVIRONMENT" =~ ^(quality_assurance|qa)$ ]]; then
+              GITHUB_PR_STATUS="::notice::Check that your application has been successfully deployed to 'user_acceptance_testing' environment"
+            elif [[ "$GITHUB_ENVIRONMENT" =~ ^(user_acceptance_testing|uat)$ ]]; then
+              GITHUB_PR_STATUS="::warning::Check that your application has been successfully deployed to 'quality_assurance' environment"
+            else
+              GITHUB_PR_STATUS="::warning::Check that your application has been successfully deployed to 'quality_assurance' and 'user_acceptance_testing' environments"
+            fi
+          fi
+
+          echo "::group::Debug Info"
+          echo "$GITHUB_PR_MESSAGE"
+          echo "$GITHUB_PR_STATUS"
+          echo "::endgroup::"
+
+      # - name: Create labels
+      #   if: success() && (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/'))
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+      #   run: |
+      #     gh_label() {
+      #       gh label create "$@" --force
+      #     }
+      #     gh_label sandbox --description "Sandbox" --color 2E86C1
+      #     gh_label develop --description "Develop" --color 229954
+      #     gh_label quality_assurance --description "Quality Assurance" --color D4AC0D
+      #     gh_label user_acceptance_testing --description "User Acceptance Testing" --color BA4A00
