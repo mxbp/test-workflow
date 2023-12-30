@@ -44,6 +44,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          gh pr create --base "develop" --title "Auto-merge PR to 'develop'"
+          gh pr create --fill --base "develop" --title "Auto-merge PR to 'develop'"
           gh pr merge --auto --merge
-        # --body "Created by GitHub Actions"
