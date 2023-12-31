@@ -66,7 +66,7 @@ jobs:
             if [[ "$GH_ENVIRONMENT" == "$GH_ENV_PROD" &&
                 "${{ github.ref_name }}" == "$GH_DEFAULT_BRANCH" ]]; then :
 
-            # QA and UAT environments can use the $GH_DEFAULT_BRANCH and release/hotfix branches
+            # TEST and STAGE environments can use the $GH_DEFAULT_BRANCH and release/hotfix branches
             elif [[ "$GH_ENVIRONMENT" =~ ^($GH_ENV_TST|$GH_ENV_STG)$ &&
                 "${{ github.ref_name }}" =~ ^(release|hotfix|$GH_DEFAULT_BRANCH)\/?([a-z0-9._-]*)$ ]]; then :
 
@@ -90,7 +90,7 @@ jobs:
           # The DEVELOP environment can use the develop branch
           elif [[ "${{ github.ref_name }}" == "develop" ]]; then
             GH_ENVIRONMENT=$GH_ENV_DEV
-          # The QA environments can use release/hotfix branches
+          # The TEST environments can use release/hotfix branches
           elif [[ "${{ github.ref_name }}" =~ ^(release|hotfix)\/([0-9.]+)$ ]]; then
             GH_ENVIRONMENT=$GH_ENV_TST
           else
@@ -173,26 +173,25 @@ jobs:
           if [[ ${{ steps.deploy.outcome }} == "success" ]]; then
             GH_PR_ACTION="add"
           else
-            gh pr ready --undo
             GH_PR_ACTION="remove"
           fi
 
           # Update labels based on deployment outcome
           gh pr edit --${GH_PR_ACTION}-label "$GH_ENVIRONMENT" && \
-            GH_PR_MESSAGE+=", label '$GH_ENVIRONMENT' ${GH_PR_ACTION}ed"
+            GH_PR_MESSAGE+=", label '$GH_ENVIRONMENT' ${GH_PR_ACTION}d"
 
           # Get specific labels
           GH_LABEL_TST=false
           GH_LABEL_STG=false
 
-          while IFS= read -r label; do
-            case $label in
+          while IFS= read -r GH_LABEL; do
+            case $GH_LABEL in
               "$GH_ENV_TST") GH_LABEL_TST=true ;;
               "$GH_ENV_STG") GH_LABEL_STG=true ;;
             esac
           done < <(gh pr view --json labels --jq '.labels[].name')
 
-          # Reset label status and move PR to draft if deploying to QA environment
+          # Reset label status and move PR to draft if deploying to TEST environment
           if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" && "$GH_LABEL_STG" == true ]]; then
             gh pr edit --remove-label "$GH_ENV_STG" && \
               GH_PR_MESSAGE+=", label '$GH_ENV_STG' removed"
@@ -203,7 +202,7 @@ jobs:
             gh pr ready && GH_PR_STATUS="Pull request has been updated, marked as 'ready for review' 👍"
           else
             gh pr ready --undo
-            if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" ]]; then
+            if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" && ${{ steps.deploy.outcome }} == "success" ]]; then
               GH_PR_STATUS="Use manual deployment of your application to the '$GH_ENV_STG' environment"
             elif [[ "$GH_ENVIRONMENT" == "$GH_ENV_STG" ]]; then
               GH_PR_STATUS="::warning::Check that your application has been successfully deployed to '$GH_ENV_TST' environment"
