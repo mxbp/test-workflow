@@ -66,13 +66,13 @@ jobs:
             if [[ "$GH_ENVIRONMENT" == "$GH_ENV_PROD" &&
                 "${{ github.ref_name }}" == "$GH_DEFAULT_BRANCH" ]]; then :
 
-            # QA and UAT environments can use the $GH_DEFAULT_BRANCH and release/hotfix branches
+            # TEST and STAGE environments can use the $GH_DEFAULT_BRANCH and release/hotfix branches
             elif [[ "$GH_ENVIRONMENT" =~ ^($GH_ENV_TST|$GH_ENV_STG)$ &&
-                "${{ github.ref_name }}" =~ ^(release|hotfix|$GH_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
+                "${{ github.ref_name }}" =~ ^(release|hotfix|$GH_DEFAULT_BRANCH)\/?([a-z0-9._-]*)$ ]]; then :
 
             # The DEVELOP environment can use the main/master, release/hotfix and develop branches
             elif [[ "$GH_ENVIRONMENT" == "$GH_ENV_DEV" &&
-                "${{ github.ref_name }}" =~ ^(develop|release|hotfix|$GH_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
+                "${{ github.ref_name }}" =~ ^(develop|release|hotfix|$GH_DEFAULT_BRANCH)\/?([a-z0-9._-]*)$ ]]; then :
 
             # The SANDBOX environment can use all branches
             elif [[ "$GH_ENVIRONMENT" == "$GH_ENV_SBX" ]]; then :
@@ -87,11 +87,11 @@ jobs:
             GH_ENVIRONMENT=${{ inputs.environment }}
 
           # Automated trigger - workflow_call
-          # DEVELOP environment can use the develop branch
+          # The DEVELOP environment can use the develop branch
           elif [[ "${{ github.ref_name }}" == "develop" ]]; then
             GH_ENVIRONMENT=$GH_ENV_DEV
-          # QA environments can use release/hotfix branches
-          elif [[ "${{ github.ref_name }}" =~ ^(release|hotfix)\/([0-9.]*)$ ]]; then
+          # The TEST environments can use release/hotfix branches
+          elif [[ "${{ github.ref_name }}" =~ ^(release|hotfix)\/([0-9.]+)$ ]]; then
             GH_ENVIRONMENT=$GH_ENV_TST
           else
             echo "::error::Cannot define the environment for '${{ github.ref_name }}' branch 👎"
@@ -173,29 +173,37 @@ jobs:
           if [[ ${{ steps.deploy.outcome }} == "success" ]]; then
             GH_PR_ACTION="add"
           else
-            gh pr ready --undo
             GH_PR_ACTION="remove"
           fi
 
           # Update labels based on deployment outcome
           gh pr edit --${GH_PR_ACTION}-label "$GH_ENVIRONMENT" && \
-            GH_PR_MESSAGE+=", label ${GH_PR_ACTION}ed - $GH_ENVIRONMENT"
+            GH_PR_MESSAGE+=", label '$GH_ENVIRONMENT' ${GH_PR_ACTION}d"
 
-          # Reset label status and move PR to draft if deploying to QA environment
-          if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" ]]; then
+          # Get specific labels
+          GH_LABEL_TST=false
+          GH_LABEL_STG=false
+
+          while IFS= read -r GH_LABEL; do
+            case $GH_LABEL in
+              "$GH_ENV_TST") GH_LABEL_TST=true ;;
+              "$GH_ENV_STG") GH_LABEL_STG=true ;;
+            esac
+          done < <(gh pr view --json labels --jq '.labels[].name')
+
+          # Reset label status and move PR to draft if deploying to TEST environment
+          if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" && "$GH_LABEL_STG" == true ]]; then
             gh pr edit --remove-label "$GH_ENV_STG" && \
-              GH_PR_MESSAGE+=", label removed - $GH_ENV_STG"
-            gh pr ready --undo
+              GH_PR_MESSAGE+=", label '$GH_ENV_STG' removed"
           fi
 
           # Check for specific labels and update PR status
-          GH_LABELS=$(gh pr view --json labels --jq '.labels[].name')
-          # TODO: Make the condition more flexible
-          if echo "$GH_LABELS" | grep -q "$GH_ENV_TST" && echo "$GH_LABELS" | grep -q "$GH_ENV_STG"; then
+          if $GH_LABEL_TST && $GH_LABEL_STG; then
             gh pr ready && GH_PR_STATUS="Pull request has been updated, marked as 'ready for review' 👍"
           else
-            if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" ]]; then
-              GH_PR_STATUS="::notice::Check that your application has been successfully deployed to '$GH_ENV_STG' environment"
+            gh pr ready --undo
+            if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" && ${{ steps.deploy.outcome }} == "success" ]]; then
+              GH_PR_STATUS="Use manual deployment of your application to the '$GH_ENV_STG' environment"
             elif [[ "$GH_ENVIRONMENT" == "$GH_ENV_STG" ]]; then
               GH_PR_STATUS="::warning::Check that your application has been successfully deployed to '$GH_ENV_TST' environment"
             else
