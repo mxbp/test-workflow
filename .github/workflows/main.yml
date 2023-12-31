@@ -10,6 +10,8 @@ on:
   pull_request:
     branches:
       - develop
+      - release/**
+      - hotfix/**
   workflow_dispatch:
     inputs:
       environment:
@@ -22,10 +24,24 @@ on:
           - quality_assurance
           - user_acceptance_testing
           - production
+env:
+  GH_ENV_SBX: "sandbox"
+  GH_ENV_DEV: "develop"
+  GH_ENV_TST: "quality_assurance"
+  GH_ENV_STG: "user_acceptance_testing"
+  GH_ENV_PROD: "production"
 jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build
+        run: echo "Test build"
   check_environment:
     name: Check Environment
     runs-on: ubuntu-latest
+    needs: build
+    if: success()
     outputs:
       description: ${{ steps.description.outputs.description }}
       environment: ${{ steps.environment.outputs.environment }}
@@ -39,96 +55,168 @@ jobs:
         run: |
           #!/bin/bash
 
-          set GITHUB_ENVIRONMENT
+          set GH_ENVIRONMENT
 
           # Manual trigger - workflow_dispatch
           if [[ "${{ inputs.environment }}" != "" ]]; then
-            GITHUB_ENVIRONMENT=$(echo "${{ inputs.environment }}" | tr [:upper:] [:lower:])
-            GITHUB_DEFAULT_BRANCH=${{ github.event.repository.default_branch }}
+            GH_ENVIRONMENT=$(echo "${{ inputs.environment }}" | tr [:upper:] [:lower:])
+            GH_DEFAULT_BRANCH=${{ github.event.repository.default_branch }}
 
-            # The PROD environment can use the $GITHUB_DEFAULT_BRANCH branches
-            if [[ "$GITHUB_ENVIRONMENT" =~ ^(production|prod)$ &&
-                "${{ github.ref_name }}" == "$GITHUB_DEFAULT_BRANCH" ]]; then :
+            # The PROD environment can use the $GH_DEFAULT_BRANCH branches
+            if [[ "$GH_ENVIRONMENT" == "$GH_ENV_PROD" &&
+                "${{ github.ref_name }}" == "$GH_DEFAULT_BRANCH" ]]; then :
 
-            # QA and UAT environments can use the $GITHUB_DEFAULT_BRANCH and release/hotfix branches
-            elif [[ "$GITHUB_ENVIRONMENT" =~ ^(quality_assurance|qa|user_acceptance_testing|uat)$ &&
-                "${{ github.ref_name }}" =~ ^(release|hotfix|$GITHUB_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
+            # QA and UAT environments can use the $GH_DEFAULT_BRANCH and release/hotfix branches
+            elif [[ "$GH_ENVIRONMENT" =~ ^($GH_ENV_TST|$GH_ENV_STG)$ &&
+                "${{ github.ref_name }}" =~ ^(release|hotfix|$GH_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
 
             # The DEVELOP environment can use the main/master, release/hotfix and develop branches
-            elif [[ "$GITHUB_ENVIRONMENT" == "develop" &&
-                "${{ github.ref_name }}" =~ ^(develop|release|hotfix|$GITHUB_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
+            elif [[ "$GH_ENVIRONMENT" == "$GH_ENV_DEV" &&
+                "${{ github.ref_name }}" =~ ^(develop|release|hotfix|$GH_DEFAULT_BRANCH)\/?([a-zA-Z0-9._-]*)$ ]]; then :
 
             # The SANDBOX environment can use all branches
-            elif [[ "$GITHUB_ENVIRONMENT" == "sandbox" ]]; then :
+            elif [[ "$GH_ENVIRONMENT" == "$GH_ENV_SBX" ]]; then :
 
             # Exit on invalid condition
             else
-              echo -e "::error::Incorrect environment has been selected.
-              Cannot use environment '${{ inputs.environment }}' for branch '${{ github.ref_name }}' 👎"
+              echo "::error::Incorrect environment has been selected. Cannot use environment '${{ inputs.environment }}' for branch '${{ github.ref_name }}' 👎"
               exit 1
             fi
 
             # Break
-            GITHUB_ENVIRONMENT=${{ inputs.environment }}
+            GH_ENVIRONMENT=${{ inputs.environment }}
 
           # Automated trigger - workflow_call
           # DEVELOP environment can use the develop branch
           elif [[ "${{ github.ref_name }}" == "develop" ]]; then
-            GITHUB_ENVIRONMENT=develop
+            GH_ENVIRONMENT=$GH_ENV_DEV
           # QA environments can use release/hotfix branches
           elif [[ "${{ github.ref_name }}" =~ ^(release|hotfix)\/([0-9.]*)$ ]]; then
-            GITHUB_ENVIRONMENT=quality_assurance
+            GH_ENVIRONMENT=$GH_ENV_TST
           else
             echo "::error::Cannot define the environment for '${{ github.ref_name }}' branch 👎"
             exit 1
           fi
 
+          echo "environment=$GH_ENVIRONMENT" >> "$GITHUB_OUTPUT"
+
           echo "::group::Debug Info"
           echo "Branch      - ${{ github.ref_name }} 👍"
-          echo "Environment - $GITHUB_ENVIRONMENT 👍"
-          echo "environment=$GITHUB_ENVIRONMENT" >> "$GITHUB_OUTPUT"
+          echo "Environment - $GH_ENVIRONMENT 👍"
           echo "::endgroup::"
-      - name: Get description
+      - name: Get repo description
         id: description
         run: |
-          echo "description=$(curl --silent --header 'Authorization: token ${{ github.token }}' \
-            'https://api.github.com/repos/${{ github.repository }}' | \
-            jq --raw-output '.description')" >> "$GITHUB_OUTPUT"
+          #!/bin/bash
+
+          response=$(curl --silent --header 'Authorization: token ${{ github.token }}' \
+            'https://api.github.com/repos/${{ github.repository }}' | jq --raw-output '.description')
+
+          echo "description=$response" >> "$GITHUB_OUTPUT"
+
+          echo "::group::Debug Info"
+          echo "Description - $response"
+          echo "::endgroup::"
       - name: Generate list using Markdown
         run: |
           echo "Info :speech_balloon:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Branch         - ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "Environment    - ${{ steps.environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "Default branch - ${{ github.event.repository.default_branch }}" >> $GITHUB_STEP_SUMMARY
-      - name: Create/Update PR from '${{ github.ref_name }}' to 'main'
-        # TODO: README.md :: Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and
-        # approve pull requests
-        if: startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh_pr() {
-            gh pr create --draft --fill "$@" || gh pr edit "$@"
-          }
-          gh_pr --base "${{ github.event.repository.default_branch }}" --title "Release v${GITHUB_REF_NAME##*/}"
-  use_environment:
-    name: Use Environment
+          echo "Branch             - ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Environment        - ${{ steps.environment.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "Default branch     - ${{ github.event.repository.default_branch }}" >> $GITHUB_STEP_SUMMARY
+  deploy:
+    name: Deploy to ${{ needs.check_environment.outputs.environment }}
     runs-on: ubuntu-latest
     needs: check_environment
+    if: success()
     environment: ${{ needs.check_environment.outputs.environment }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Debug Info
         run: |
           echo "Description        - ${{ needs.check_environment.outputs.description }}"
           echo "Stage              - ${{ vars.STAGE }}"
           echo "Default branch     - ${{ github.event.repository.default_branch }}"
-      - name: Generate list using Markdown
+          echo "URL                - https://www.google.com" >> $GITHUB_STEP_SUMMARY
+          echo "URL link           - [www.google.com](https://www.google.com)" >> $GITHUB_STEP_SUMMARY
+      - name: Deploy
+        id: deploy
+        run: echo "Test deploy"
+      - name: Create/update PR from '${{ github.ref_name }}' to '${{ github.event.repository.default_branch }}'
+        # TODO: README.md :: Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and
+        # approve pull requests
+        if: >
+          always() &&
+          (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_ENVIRONMENT: ${{ needs.check_environment.outputs.environment }}
         run: |
-          echo "URL         - https://www.google.com" >> $GITHUB_STEP_SUMMARY
-          echo "URL link    - [www.google.com](https://www.google.com)" >> $GITHUB_STEP_SUMMARY
-      - name: Add '${{ needs.check_environment.outputs.environment }}' label
-        if: success() && github.event_name == 'pull_request'
-        run: |          
-          gh pr edit --base "${{ github.event.repository.default_branch }}" \
-            --add-label "${{ needs.check_environment.outputs.environment }}"
+          #!/bin/bash
+
+          set GH_PR_MESSAGE
+          set GH_PR_STATUS
+          set GH_PR_ACTION
+
+          # Create or edit a pull request
+          gh pr create --draft --fill \
+            --base "${{ github.event.repository.default_branch }}" \
+            --title "Release v${GITHUB_REF_NAME##*/}" && GH_PR_MESSAGE="PR was created and marked as a draft" || \
+            gh pr edit \
+              --base "${{ github.event.repository.default_branch }}" \
+              --title "Release v${GITHUB_REF_NAME##*/}" && GH_PR_MESSAGE="PR was updated"
+
+          # Get deployment outcome. Change PR status to draft if deployment fails
+          if [[ ${{ steps.deploy.outcome }} == "success" ]]; then
+            GH_PR_ACTION="add"
+          else
+            gh pr ready --undo
+            GH_PR_ACTION="remove"
+          fi
+
+          # Update labels based on deployment outcome
+          gh pr edit --${GH_PR_ACTION}-label "$GH_ENVIRONMENT" && \
+            GH_PR_MESSAGE+=", label ${GH_PR_ACTION}ed - $GH_ENVIRONMENT"
+
+          # Reset label status and move PR to draft if deploying to QA environment
+          if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" ]]; then
+            gh pr edit --remove-label "$GH_ENV_STG" && \
+              GH_PR_MESSAGE+=", label removed - $GH_ENV_STG"
+            gh pr ready --undo
+          fi
+
+          # Check for specific labels and update PR status
+          GH_LABELS=$(gh pr view --json labels --jq '.labels[].name')
+          # TODO: Make the condition more flexible
+          if echo "$GH_LABELS" | grep -q "$GH_ENV_TST" && echo "$GH_LABELS" | grep -q "$GH_ENV_STG"; then
+            gh pr ready && GH_PR_STATUS="Pull request has been updated, marked as 'ready for review' 👍"
+          else
+            if [[ "$GH_ENVIRONMENT" == "$GH_ENV_TST" ]]; then
+              GH_PR_STATUS="::notice::Check that your application has been successfully deployed to '$GH_ENV_STG' environment"
+            elif [[ "$GH_ENVIRONMENT" == "$GH_ENV_STG" ]]; then
+              GH_PR_STATUS="::warning::Check that your application has been successfully deployed to '$GH_ENV_TST' environment"
+            else
+              GH_PR_STATUS="::warning::Check that your application has been successfully deployed to '$GH_ENV_TST' and '$GH_ENV_STG' environments"
+            fi
+          fi
+
+          echo "::group::Debug Info"
+          echo "$GH_PR_MESSAGE"
+          echo "$GH_PR_STATUS"
+          echo "::endgroup::"
+
+      # - name: Create labels
+      #   if: success() && (startsWith(github.ref_name, 'release/') || startsWith(github.ref_name, 'hotfix/'))
+      #   env:
+      #     GH_TOKEN: ${{ github.token }}
+      #   run: |
+      #     gh_label() {
+      #       gh label create "$@" --force
+      #     }
+      #     gh_label sandbox --description "Sandbox" --color 2E86C1
+      #     gh_label develop --description "Develop" --color 229954
+      #     gh_label quality_assurance --description "Quality Assurance" --color D4AC0D
+      #     gh_label user_acceptance_testing --description "User Acceptance Testing" --color BA4A00
