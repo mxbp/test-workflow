@@ -3,6 +3,7 @@
 set GH_DEFAULT_BRANCH
 set GH_DEPLOY_STATUS
 set GH_PR_ACTION
+set GH_PR_ACTION_MESSAGE
 set GH_PR_MESSAGE
 set GH_PR_STATUS
 
@@ -17,13 +18,15 @@ gh pr create --draft --fill \
 # Get deployment outcome. Change PR status to draft if deployment fails
 if [[ $GH_DEPLOY_STATUS == "success" ]]; then
   GH_PR_ACTION="add"
+  GH_PR_ACTION_MESSAGE="added"
 else
   GH_PR_ACTION="remove"
+  GH_PR_ACTION_MESSAGE="removed"
 fi
 
 # Update labels based on deployment outcome
 gh pr edit --${GH_PR_ACTION}-label "$GH_ENVIRONMENT" && \
-  GH_PR_MESSAGE+=", label '$GH_ENVIRONMENT' ${GH_PR_ACTION}d"
+  GH_PR_MESSAGE+=", label '$GH_ENVIRONMENT' $GH_PR_ACTION_MESSAGE"
 
 # Get specific labels
 GH_LABEL_TST=false
