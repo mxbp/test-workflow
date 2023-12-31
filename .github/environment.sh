@@ -1,12 +1,13 @@
 #!/bin/bash
 
+set GH_CURRENT_BRANCH
+set GH_DEFAULT_BRANCH
 set GH_ENVIRONMENT
+set GH_INPUT_ENVIRONMENT
 
 ## Manual trigger - workflow_dispatch
-if [[ "${{ inputs.environment }}" != "" ]]; then
-  GH_ENVIRONMENT=$(echo "${{ inputs.environment }}" | tr [:upper:] [:lower:])
-  GH_DEFAULT_BRANCH=${{ github.event.repository.default_branch }}
-  GH_CURRENT_BRANCH=${{ github.ref_name }}
+if [[ "$GH_INPUT_ENVIRONMENT" != "" ]]; then
+  GH_ENVIRONMENT=$(echo "$GH_INPUT_ENVIRONMENT" | tr [:upper:] [:lower:])
 
   # The PROD environment can use the $GH_DEFAULT_BRANCH branches
   if [[ "$GH_ENVIRONMENT" == "$GH_ENV_PROD" &&
@@ -25,11 +26,11 @@ if [[ "${{ inputs.environment }}" != "" ]]; then
 
   # Exit on invalid condition
   else
-    echo "::error::Incorrect environment has been selected. Cannot use environment '${{ inputs.environment }}' for branch '$GH_CURRENT_BRANCH' 👎"
+    echo "::error::Incorrect environment has been selected. Cannot use environment '$GH_INPUT_ENVIRONMENT' for branch '$GH_CURRENT_BRANCH' 👎"
     exit 1
   fi
 
-  GH_ENVIRONMENT=${{ inputs.environment }}
+  GH_ENVIRONMENT=$GH_INPUT_ENVIRONMENT
 
 ## Automated trigger - workflow_call
 # The DEVELOP environment can use the develop branch
