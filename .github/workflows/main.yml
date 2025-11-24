@@ -47,7 +47,7 @@ jobs:
       environment: ${{ steps.environment.outputs.environment }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Get environment
@@ -86,7 +86,7 @@ jobs:
     environment: ${{ needs.check_environment.outputs.environment }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Debug Info
